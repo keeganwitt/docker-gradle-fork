@@ -11,6 +11,40 @@ _sed() {
   fi
 }
 
+get_graalvm_info() {
+  local jdk_version=$1
+  local version=$(curl --silent --location 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=20&page=1' | jq --raw-output "map(select(.tag_name | contains(\"jdk-$jdk_version\"))) | .[0].tag_name | sub(\"jdk-\"; \"\")" | tr -d '\r')
+  local amd64_sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${version}/graalvm-community-jdk-${version}_linux-x64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
+  local aarch64_sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${version}/graalvm-community-jdk-${version}_linux-aarch64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
+  echo "$version $amd64_sha $aarch64_sha"
+}
+
+update_dockerfile_graalvm() {
+  local dockerfile=$1
+  local version=$2
+  local amd64_sha=$3
+  local aarch64_sha=$4
+  local prefix=${5:-""}
+
+  _sed \
+    -e "s/JAVA_${prefix}VERSION=[^ ]+/JAVA_${prefix}VERSION=${version}/" \
+    -e "s/GRAALVM_${prefix}AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_${prefix}AMD64_DOWNLOAD_SHA256=${amd64_sha}/" \
+    -e "s/GRAALVM_${prefix}AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_${prefix}AARCH64_DOWNLOAD_SHA256=${aarch64_sha}/" \
+    "$dockerfile"
+}
+
+print_graalvm_info() {
+  local jdk_version=$1
+  local version=$2
+  local amd64_sha=$3
+  local aarch64_sha=$4
+
+  echo "Latest Graal ${jdk_version} version is ${version}"
+  echo "Graal ${jdk_version} AMD64 hash is ${amd64_sha}"
+  echo "Graal ${jdk_version} AARCH64 hash is ${aarch64_sha}"
+  echo
+}
+
 BASE_VERSION=$(cat version.txt)
 gradleVersion=$(curl --fail --show-error --silent --location "https://services.gradle.org/versions/$BASE_VERSION" |
  jq --raw-output '.[] | select(.snapshot==false and .nightly==false and .broken==false and .milestoneFor=="" and .rcFor=="") | .version' | sort --version-sort | tail -n1)
@@ -29,85 +63,35 @@ if [ "$BASE_VERSION" -lt "7" ]; then
   exit 0
 fi
 
-graal17Version=$(curl --silent --location 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=20&page=1' | jq --raw-output 'map(select(.tag_name | contains("jdk-17"))) | .[0].tag_name | sub("jdk-"; "")' | tr -d '\r')
-graal17amd64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal17Version}/graalvm-community-jdk-${graal17Version}_linux-x64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
-graal17aarch64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal17Version}/graalvm-community-jdk-${graal17Version}_linux-aarch64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
-
-_sed "s/JAVA_VERSION=[^ ]+/JAVA_VERSION=${graal17Version}/" ./jdk17-noble-graal/Dockerfile
-_sed "s/GRAALVM_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AMD64_DOWNLOAD_SHA256=${graal17amd64Sha}/" ./jdk17-noble-graal/Dockerfile
-_sed "s/GRAALVM_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AARCH64_DOWNLOAD_SHA256=${graal17aarch64Sha}/" ./jdk17-noble-graal/Dockerfile
-
-_sed "s/JAVA_VERSION=[^ ]+/JAVA_VERSION=${graal17Version}/" ./jdk17-jammy-graal/Dockerfile
-_sed "s/GRAALVM_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AMD64_DOWNLOAD_SHA256=${graal17amd64Sha}/" ./jdk17-jammy-graal/Dockerfile
-_sed "s/GRAALVM_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AARCH64_DOWNLOAD_SHA256=${graal17aarch64Sha}/" ./jdk17-jammy-graal/Dockerfile
-
-echo "Latest Graal 17 version is ${graal17Version}"
-echo "Graal 17 AMD64 hash is ${graal17amd64Sha}"
-echo "Graal 17 AARCH64 hash is ${graal17aarch64Sha}"
-echo
+read -r graal17Version graal17amd64Sha graal17aarch64Sha <<< "$(get_graalvm_info 17)"
+update_dockerfile_graalvm ./jdk17-noble-graal/Dockerfile "$graal17Version" "$graal17amd64Sha" "$graal17aarch64Sha"
+update_dockerfile_graalvm ./jdk17-jammy-graal/Dockerfile "$graal17Version" "$graal17amd64Sha" "$graal17aarch64Sha"
+print_graalvm_info 17 "$graal17Version" "$graal17amd64Sha" "$graal17aarch64Sha"
 
 if [ "$BASE_VERSION" -lt "8" ]; then
   # no GraalVM 21+ for Gradle 7.x
   exit 0
 fi
 
-graal21Version=$(curl --silent --location 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=20&page=1' | jq --raw-output 'map(select(.tag_name | contains("jdk-21"))) | .[0].tag_name | sub("jdk-"; "")' | tr -d '\r')
-graal21amd64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal21Version}/graalvm-community-jdk-${graal21Version}_linux-x64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
-graal21aarch64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal21Version}/graalvm-community-jdk-${graal21Version}_linux-aarch64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
-
-_sed "s/JAVA_VERSION=[^ ]+/JAVA_VERSION=${graal21Version}/" ./jdk21-noble-graal/Dockerfile
-_sed "s/GRAALVM_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AMD64_DOWNLOAD_SHA256=${graal21amd64Sha}/" ./jdk21-noble-graal/Dockerfile
-_sed "s/GRAALVM_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AARCH64_DOWNLOAD_SHA256=${graal21aarch64Sha}/" ./jdk21-noble-graal/Dockerfile
-
-_sed "s/JAVA_VERSION=[^ ]+/JAVA_VERSION=${graal21Version}/" ./jdk21-jammy-graal/Dockerfile
-_sed "s/GRAALVM_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AMD64_DOWNLOAD_SHA256=${graal21amd64Sha}/" ./jdk21-jammy-graal/Dockerfile
-_sed "s/GRAALVM_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AARCH64_DOWNLOAD_SHA256=${graal21aarch64Sha}/" ./jdk21-jammy-graal/Dockerfile
-
-echo "Latest Graal 21 version is ${graal21Version}"
-echo "Graal 21 AMD64 hash is ${graal21amd64Sha}"
-echo "Graal 21 AARCH64 hash is ${graal21aarch64Sha}"
-echo
+read -r graal21Version graal21amd64Sha graal21aarch64Sha <<< "$(get_graalvm_info 21)"
+update_dockerfile_graalvm ./jdk21-noble-graal/Dockerfile "$graal21Version" "$graal21amd64Sha" "$graal21aarch64Sha"
+update_dockerfile_graalvm ./jdk21-jammy-graal/Dockerfile "$graal21Version" "$graal21amd64Sha" "$graal21aarch64Sha"
+print_graalvm_info 21 "$graal21Version" "$graal21amd64Sha" "$graal21aarch64Sha"
 
 if [ "$BASE_VERSION" -lt "9" ]; then
-  graal24Version=$( curl --silent --location 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=20&page=1' | jq --raw-output 'map(select(.tag_name | contains("jdk-24"))) | .[0].tag_name | sub("jdk-"; "")' | tr -d '\r')
-  graal24amd64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal24Version}/graalvm-community-jdk-${graal24Version}_linux-x64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
-  graal24aarch64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal24Version}/graalvm-community-jdk-${graal24Version}_linux-aarch64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
+  read -r graal24Version graal24amd64Sha graal24aarch64Sha <<< "$(get_graalvm_info 24)"
+  update_dockerfile_graalvm ./jdk24-noble-graal/Dockerfile "$graal24Version" "$graal24amd64Sha" "$graal24aarch64Sha"
 
-  _sed "s/JAVA_VERSION=[^ ]+/JAVA_VERSION=${graal24Version}/" ./jdk24-noble-graal/Dockerfile
-  _sed "s/GRAALVM_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AMD64_DOWNLOAD_SHA256=${graal24amd64Sha}/" ./jdk24-noble-graal/Dockerfile
-  _sed "s/GRAALVM_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AARCH64_DOWNLOAD_SHA256=${graal24aarch64Sha}/" ./jdk24-noble-graal/Dockerfile
+  update_dockerfile_graalvm ./jdk-lts-and-current-graal/Dockerfile "$graal21Version" "$graal21amd64Sha" "$graal21aarch64Sha" "21_"
+  update_dockerfile_graalvm ./jdk-lts-and-current-graal/Dockerfile "$graal24Version" "$graal24amd64Sha" "$graal24aarch64Sha" "24_"
 
-  _sed "s/JAVA_21_VERSION=[^ ]+/JAVA_21_VERSION=${graal21Version}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_21_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_21_AMD64_DOWNLOAD_SHA256=${graal21amd64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_21_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_21_AARCH64_DOWNLOAD_SHA256=${graal21aarch64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/JAVA_24_VERSION=[^ ]+/JAVA_24_VERSION=${graal24Version}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_24_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_24_AMD64_DOWNLOAD_SHA256=${graal24amd64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_24_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_24_AARCH64_DOWNLOAD_SHA256=${graal24aarch64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-
-
-  echo "Latest Graal 24 version is ${graal24Version}"
-  echo "Graal 24 AMD64 hash is ${graal24amd64Sha}"
-  echo "Graal 24 AARCH64 hash is ${graal24aarch64Sha}"
-  echo
+  print_graalvm_info 24 "$graal24Version" "$graal24amd64Sha" "$graal24aarch64Sha"
 else
-  graal25Version=$( curl --silent --location 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=20&page=1' | jq --raw-output 'map(select(.tag_name | contains("jdk-25"))) | .[0].tag_name | sub("jdk-"; "")' | tr -d '\r')
-  graal25amd64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal25Version}/graalvm-community-jdk-${graal25Version}_linux-x64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
-  graal25aarch64Sha=$(curl --fail --location --silent "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${graal25Version}/graalvm-community-jdk-${graal25Version}_linux-aarch64_bin.tar.gz" | sha256sum | cut -d' ' -f1)
+  read -r graal25Version graal25amd64Sha graal25aarch64Sha <<< "$(get_graalvm_info 25)"
+  update_dockerfile_graalvm ./jdk25-noble-graal/Dockerfile "$graal25Version" "$graal25amd64Sha" "$graal25aarch64Sha"
 
-  _sed "s/JAVA_VERSION=[^ ]+/JAVA_VERSION=${graal25Version}/" ./jdk25-noble-graal/Dockerfile
-  _sed "s/GRAALVM_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AMD64_DOWNLOAD_SHA256=${graal25amd64Sha}/" ./jdk25-noble-graal/Dockerfile
-  _sed "s/GRAALVM_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_AARCH64_DOWNLOAD_SHA256=${graal25aarch64Sha}/" ./jdk25-noble-graal/Dockerfile
+  update_dockerfile_graalvm ./jdk-lts-and-current-graal/Dockerfile "$graal25Version" "$graal25amd64Sha" "$graal25aarch64Sha" "LTS_"
+  update_dockerfile_graalvm ./jdk-lts-and-current-graal/Dockerfile "$graal25Version" "$graal25amd64Sha" "$graal25aarch64Sha" "CURRENT_"
 
-  _sed "s/JAVA_LTS_VERSION=[^ ]+/JAVA_LTS_VERSION=${graal25Version}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_LTS_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_LTS_AMD64_DOWNLOAD_SHA256=${graal25amd64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_LTS_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_LTS_AARCH64_DOWNLOAD_SHA256=${graal25aarch64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/JAVA_CURRENT_VERSION=[^ ]+/JAVA_CURRENT_VERSION=${graal25Version}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_CURRENT_AMD64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_CURRENT_AMD64_DOWNLOAD_SHA256=${graal25amd64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-  _sed "s/GRAALVM_CURRENT_AARCH64_DOWNLOAD_SHA256=[^ ]+/GRAALVM_CURRENT_AARCH64_DOWNLOAD_SHA256=${graal25aarch64Sha}/" ./jdk-lts-and-current-graal/Dockerfile
-
-
-  echo "Latest Graal 25 version is ${graal25Version}"
-  echo "Graal 25 AMD64 hash is ${graal25amd64Sha}"
-  echo "Graal 25 AARCH64 hash is ${graal25aarch64Sha}"
-  echo
+  print_graalvm_info 25 "$graal25Version" "$graal25amd64Sha" "$graal25aarch64Sha"
 fi
